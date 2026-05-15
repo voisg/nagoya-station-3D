@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>名古屋駅 250m 3Dモデル</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #050a14; font-family: 'Hiragino Kaku Gothic Pro', 'Meiryo', sans-serif; overflow: hidden; }
+  canvas { display: block; }
+  
+  #ui {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    padding: 18px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    pointer-events: none;
+    z-index: 10;
+  }
+  
+  #title-block {
+    background: rgba(5, 10, 20, 0.85);
+    border: 1px solid rgba(80, 160, 255, 0.3);
+    border-radius: 8px;
+    padding: 12px 18px;
+    backdrop-filter: blur(12px);
+  }
+  h1 {
+    font-size: 15px;
+    font-weight: 700;
+    color: #e0f0ff;
+    letter-spacing: 0.08em;
+    margin-bottom: 3px;
+  }
+  .subtitle {
+    font-size: 10px;
+    color: #5599cc;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+  
+  #legend {
+    background: rgba(5, 10, 20, 0.85);
+    border: 1px solid rgba(80, 160, 255, 0.2);
+    border-radius: 8px;
+    padding: 12px 16px;
+    backdrop-filter: blur(12px);
+    font-size: 10px;
+    color: #7aaadd;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 5px;
+  }
+  .legend-item:last-child { margin-bottom: 0; }
+  .dot {
+    width: 10px; height: 10px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+  
+  #controls-hint {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(5, 10, 20, 0.75);
+    border: 1px solid rgba(80, 160, 255, 0.2);
+    border-radius: 20px;
+    padding: 8px 20px;
+    font-size: 10px;
+    color: #5588aa;
+    letter-spacing: 0.1em;
+    pointer-events: none;
+    z-index: 10;
+  }
+  
+  #tooltip {
+    position: fixed;
+    background: rgba(5, 10, 20, 0.95);
+    border: 1px solid rgba(80, 160, 255, 0.5);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 11px;
+    color: #cce0ff;
+    pointer-events: none;
+    z-index: 20;
+    display: none;
+    max-width: 180px;
+  }
+  #tooltip .t-name { font-weight: 700; font-size: 12px; color: #88ccff; margin-bottom: 2px; }
+  #tooltip .t-info { font-size: 10px; color: #5599bb; }
+
+  #radius-label {
+    position: fixed;
+    bottom: 50px;
+    right: 20px;
+    font-size: 10px;
+    color: rgba(80,160,255,0.6);
+    pointer-events: none;
+    z-index: 10;
+    text-align: right;
+    letter-spacing: 0.1em;
+  }
+</style>
+</head>
+<body>
+
+<div id="ui">
+  <div id="title-block">
+    <h1>名古屋駅 エリア 3Dモデル</h1>
+    <div class="subtitle">Nagoya Station · 半径 250m · Google Maps参照</div>
+  </div>
+  <div id="legend">
+    <div class="legend-item"><div class="dot" style="background:#4488ff"></div>駅・複合施設</div>
+    <div class="legend-item"><div class="dot" style="background:#00ccaa"></div>オフィスタワー</div>
+    <div class="legend-item"><div class="dot" style="background:#ff8844"></div>ホテル</div>
+    <div class="legend-item"><div class="dot" style="background:#cc88ff"></div>商業施設</div>
+    <div class="legend-item"><div class="dot" style="background:#ffcc44"></div>その他ビル</div>
+    <div class="legend-item"><div class="dot" style="background:rgba(80,160,255,0.3)"></div>250m 境界</div>
+  </div>
+</div>
+
+<div id="tooltip">
+  <div class="t-name" id="tt-name"></div>
+  <div class="t-info" id="tt-height"></div>
+  <div class="t-info" id="tt-desc"></div>
+</div>
+<div id="controls-hint">🖱 ドラッグ: 回転 &nbsp;|&nbsp; スクロール: ズーム &nbsp;|&nbsp; 右ドラッグ: パン &nbsp;|&nbsp; クリック: 詳細</div>
+<div id="radius-label">● 表示範囲: 半径 250m</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+// ── Three.js r128 via CDN ──────────────────────────────
+const THREE_URL = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+
+// Load Three.js classic way for r128 compatibility
+const script = document.createElement('script');
+script.src = THREE_URL;
+script.onload = init;
+document.head.appendChild(script);
+
+// ── OrbitControls (inline minimal impl) ───────────────
+function addOrbitControls(camera, domElement) {
+  let isRotating = false, isPanning = false;
+  let prevMouse = { x: 0, y: 0 };
+  let spherical = { theta: Math.PI / 5, phi: Math.PI / 3.5, r: 600 };
+  let target = new THREE.Vector3(0, 50, 0);
+
+  function updateCamera() {
+    const sinPhi = Math.sin(spherical.phi);
+    camera.position.set(
+      target.x + spherical.r * sinPhi * Math.sin(spherical.theta),
+      target.y + spherical.r * Math.cos(spherical.phi),
+      target.z + spherical.r * sinPhi * Math.cos(spherical.theta)
+    );
+    camera.lookAt(target);
+  }
+  updateCamera();
+
+  domElement.addEventListener('mousedown', e => {
+    if (e.button === 0) isRotating = true;
+    if (e.button === 2) isPanning = true;
+    prevMouse = { x: e.clientX, y: e.clientY };
+  });
+  window.addEventListener('mouseup', () => { isRotating = false; isPanning = false; });
+  window.addEventListener('mousemove', e => {
+    const dx = e.clientX - prevMouse.x;
+    const dy = e.clientY - prevMouse.y;
+    prevMouse = { x: e.clientX, y: e.clientY };
+    if (isRotating) {
+      spherical.theta -= dx * 0.005;
+      spherical.phi = Math.max(0.1, Math.min(Math.PI / 2.2, spherical.phi + dy * 0.005));
+      updateCamera();
+    }
+    if (isPanning) {
+      const right = new THREE.Vector3();
+      const up = new THREE.Vector3(0, 1, 0);
+      right.crossVectors(camera.getWorldDirection(new THREE.Vector3()), up).normalize();
+      target.addScaledVector(right, -dx * 0.4);
+      target.y += dy * 0.4;
+      updateCamera();
+    }
+  });
+  domElement.addEventListener('wheel', e => {
+    spherical.r = Math.max(100, Math.min(1500, spherical.r + e.deltaY * 0.5));
+    updateCamera();
+    e.preventDefault();
+  }, { passive: false });
+  domElement.addEventListener('contextmenu', e => e.preventDefault());
+
+  // Touch
+  let lastTouchDist = null;
+  domElement.addEventListener('touchstart', e => {
+    if (e.touches.length === 1) {
+      isRotating = true;
+      prevMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    }
+    if (e.touches.length === 2) {
+      isRotating = false;
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      lastTouchDist = Math.sqrt(dx*dx+dy*dy);
+    }
+  });
+  domElement.addEventListener('touchmove', e => {
+    if (e.touches.length === 1 && isRotating) {
+      const dx = e.touches[0].clientX - prevMouse.x;
+      const dy = e.touches[0].clientY - prevMouse.y;
+      prevMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      spherical.theta -= dx * 0.007;
+      spherical.phi = Math.max(0.1, Math.min(Math.PI / 2.2, spherical.phi + dy * 0.007));
+      updateCamera();
+    }
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.sqrt(dx*dx+dy*dy);
+      if (lastTouchDist) spherical.r = Math.max(100, Math.min(1500, spherical.r - (dist - lastTouchDist) * 1.5));
+      lastTouchDist = dist;
+      updateCamera();
+    }
+    e.preventDefault();
+  }, { passive: false });
+  domElement.addEventListener('touchend', () => { isRotating = false; lastTouchDist = null; });
+
+  return { updateCamera };
+}
+
+// ── Main ──────────────────────────────────────────────
+function init() {
+  const W = window.innerWidth, H = window.innerHeight;
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x050a14);
+  scene.fog = new THREE.FogExp2(0x050a14, 0.0012);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(W, H);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 0.9;
+  document.body.appendChild(renderer.domElement);
+
+  const camera = new THREE.PerspectiveCamera(55, W / H, 1, 5000);
+  const controls = addOrbitControls(camera, renderer.domElement);
+
+  // ── Lighting ─────────────────────────────
+  const ambient = new THREE.AmbientLight(0x1a2a40, 0.6);
+  scene.add(ambient);
+
+  const sun = new THREE.DirectionalLight(0xffeedd, 1.2);
+  sun.position.set(300, 500, 200);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.near = 1;
+  sun.shadow.camera.far = 1200;
+  sun.shadow.camera.left = -400;
+  sun.shadow.camera.right = 400;
+  sun.shadow.camera.top = 400;
+  sun.shadow.camera.bottom = -400;
+  scene.add(sun);
+
+  const fill = new THREE.DirectionalLight(0x4488ff, 0.4);
+  fill.position.set(-200, 300, -100);
+  scene.add(fill);
+
+  // ── Ground ────────────────────────────────
+  const groundGeo = new THREE.CircleGeometry(260, 64);
+  const groundMat = new THREE.MeshStandardMaterial({
+    color: 0x0d1a2a,
+    roughness: 0.95,
+    metalness: 0.05,
+  });
+  const ground = new THREE.Mesh(groundGeo, groundMat);
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  // ── 250m boundary ring ────────────────────
+  const ringGeo = new THREE.RingGeometry(249, 253, 128);
+  const ringMat = new THREE.MeshBasicMaterial({
+    color: 0x2255aa,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.5,
+  });
+  const ring = new THREE.Mesh(ringGeo, ringMat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.3;
+  scene.add(ring);
+
+  // Dashed circle lines
+  for (let r of [125, 250]) {
+    const pts = [];
+    for (let i = 0; i <= 128; i++) {
+      const a = (i / 128) * Math.PI * 2;
+      pts.push(new THREE.Vector3(Math.cos(a) * r, 0.5, Math.sin(a) * r));
+    }
+    const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
+    const lineMat = new THREE.LineBasicMaterial({
+      color: r === 250 ? 0x4488ff : 0x224466,
+      transparent: true,
+      opacity: r === 250 ? 0.6 : 0.3,
+    });
+    scene.add(new THREE.Line(lineGeo, lineMat));
+  }
+
+  // ── Grid streets ──────────────────────────
+  function addRoad(x1, z1, x2, z2, w) {
+    const len = Math.sqrt((x2-x1)**2+(z2-z1)**2);
+    const angle = Math.atan2(x2-x1, z2-z1);
+    const geo = new THREE.PlaneGeometry(w, len);
+    const mat = new THREE.MeshStandardMaterial({ color: 0x0a1520, roughness: 1 });
+    const m = new THREE.Mesh(geo, mat);
+    m.rotation.x = -Math.PI / 2;
+    m.rotation.z = -angle;
+    m.position.set((x1+x2)/2, 0.2, (z1+z2)/2);
+    m.receiveShadow = true;
+    scene.add(m);
+  }
+  // Sakura-dori (E-W main street, south of station)
+  addRoad(-260, 60, 260, 60, 28);
+  // Taikou-dori (E-W, north)
+  addRoad(-260, -80, 260, -80, 22);
+  // N-S axis
+  addRoad(0, -260, 0, 260, 18);
+  addRoad(-130, -260, -130, 260, 12);
+  addRoad(110, -260, 110, 260, 12);
+
+  // ── Building helper ───────────────────────
+  const buildingMeshes = [];
+
+  function makeBuilding(cfg) {
+    const { x, z, w, d, h, color, name, floors, desc, emissive } = cfg;
+    const geo = new THREE.BoxGeometry(w, h, d);
+
+    // Window texture-like material with slight emit
+    const mat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(color),
+      roughness: 0.55,
+      metalness: 0.35,
+      emissive: new THREE.Color(emissive || color).multiplyScalar(0.12),
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(x, h / 2, z);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.userData = { name, floors, desc, h };
+    scene.add(mesh);
+    buildingMeshes.push(mesh);
+
+    // Rooftop glow edge
+    if (h > 80) {
+      const edgeGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(w + 0.5, 1, d + 0.5));
+      const edgeMat = new THREE.LineBasicMaterial({
+        color: new THREE.Color(color).multiplyScalar(2),
+        transparent: true, opacity: 0.6,
+      });
+      const edge = new THREE.LineSegments(edgeGeo, edgeMat);
+      edge.position.set(x, h + 0.3, z);
+      scene.add(edge);
+    }
+
+    // Window grid on tall buildings
+    if (h > 50) {
+      const wCount = Math.floor(w / 6);
+      const fCount = Math.floor(h / 5);
+      for (let wi = 0; wi < wCount; wi++) {
+        for (let fi = 0; fi < fCount; fi++) {
+          if (Math.random() > 0.25) {
+            const wGeo = new THREE.PlaneGeometry(2.5, 2.5);
+            const wMat = new THREE.MeshBasicMaterial({
+              color: Math.random() > 0.3 ? 0xffffcc : 0x8899ff,
+              transparent: true,
+              opacity: 0.6 + Math.random() * 0.4,
+            });
+            const wx = x - w/2 + (wi + 0.5) * (w / wCount) + (Math.random()-0.5);
+            const wy = fi * (h / fCount) + 4;
+            const wm = new THREE.Mesh(wGeo, wMat);
+            wm.position.set(wx, wy, z + d/2 + 0.15);
+            scene.add(wm);
+            // Back face too
+            const wm2 = wm.clone();
+            wm2.position.set(wx, wy, z - d/2 - 0.15);
+            wm2.rotation.y = Math.PI;
+            scene.add(wm2);
+          }
+        }
+      }
+    }
+
+    return mesh;
+  }
+
+  // ══════════════════════════════════════════════════════
+  // 名古屋駅周辺 主要建物 (Google Maps/Earth 参照・縮尺近似)
+  // 座標系: 名古屋駅中心 = 原点, 1unit = 1m
+  // ══════════════════════════════════════════════════════
+
+  // ① JRセントラルタワーズ・オフィスタワー (北棟) 245m 59F
+  makeBuilding({
+    x: 15, z: -15, w: 52, d: 52, h: 245,
+    color: 0x2255cc,
+    emissive: 0x4488ff,
+    name: 'JRセントラルタワーズ\nオフィスタワー(北)',
+    floors: '59階 / 245m',
+    desc: '名古屋の代表的超高層ビル。JR東海本社等が入居。'
+  });
+
+  // ② JRセントラルタワーズ・ホテルタワー (南棟) 226m 51F
+  makeBuilding({
+    x: 15, z: 50, w: 52, d: 52, h: 226,
+    color: 0x3366dd,
+    emissive: 0x6699ff,
+    name: 'JRセントラルタワーズ\nホテルタワー(南)',
+    floors: '51階 / 226m',
+    desc: 'マリオット アソシアホテル名古屋。5つ星ホテル。'
+  });
+
+  // ③ 名古屋駅本体（高架駅）
+  makeBuilding({
+    x: 15, z: 15, w: 200, d: 60, h: 22,
+    color: 0x334466,
+    name: '名古屋駅（JR）',
+    floors: '地上3階',
+    desc: 'JR東海・新幹線・在来線。1日約43万人が利用。'
+  });
+
+  // ④ 地下街連絡棟・コンコース
+  makeBuilding({
+    x: 15, z: 15, w: 160, d: 30, h: 8,
+    color: 0x223355,
+    name: 'ゲートウォーク\n地下街コンコース',
+    floors: '地上1〜2階',
+    desc: '駅東西をつなぐ商業コンコース。'
+  });
+
+  // ⑤ 名鉄百貨店 本館・メンズ館
+  makeBuilding({
+    x: 105, z: -40, w: 75, d: 65, h: 110,
+    color: 0x884422,
+    emissive: 0xcc6633,
+    name: '名鉄百貨店\n本館・メンズ館',
+    floors: '13階 / 110m',
+    desc: '名古屋最大級のデパート。東側に隣接。'
+  });
+
+  // ⑥ 近鉄パッセ
+  makeBuilding({
+    x: 105, z: 55, w: 55, d: 45, h: 70,
+    color: 0x994433,
+    name: '近鉄パッセ',
+    floors: '10階',
+    desc: '近鉄名古屋駅直結の商業施設。'
+  });
+
+  // ⑦ ミヤコ地下街上部ビル
+  makeBuilding({
+    x: 90, z: 100, w: 45, d: 40, h: 55,
+    color: 0xaa5533,
+    name: '名鉄バスターミナル\nビル',
+    floors: '8階',
+    desc: '名鉄バスセンター・名鉄百貨店北館。'
+  });
+
+  // ⑧ 名古屋ルーセントタワー
+  makeBuilding({
+    x: -200, z: -10, w: 45, d: 45, h: 180,
+    color: 0x228866,
+    emissive: 0x44ccaa,
+    name: '名古屋ルーセントタワー',
+    floors: '42階 / 180m',
+    desc: '太閤通口(西口)側。名古屋市内第3位の高さ。2006年竣工。'
+  });
+
+  // ⑨ グローバルゲート（WEST）
+  makeBuilding({
+    x: -210, z: 100, w: 50, d: 38, h: 155,
+    color: 0x33aa77,
+    emissive: 0x44bb88,
+    name: 'グローバルゲート WEST',
+    floors: '36階 / 155m',
+    desc: 'ヒルトン名古屋等が入居。2017年竣工。'
+  });
+
+  // ⑩ グローバルゲート（EAST低層部）
+  makeBuilding({
+    x: -160, z: 100, w: 60, d: 40, h: 38,
+    color: 0x2a8866,
+    name: 'グローバルゲート\nEAST低層棟',
+    floors: '6階',
+    desc: '商業施設・オフィス複合。'
+  });
+
+  // ⑪ ブリックス(ビジネスホテル群) 西口南
+  makeBuilding({
+    x: -120, z: 90, w: 35, d: 30, h: 65,
+    color: 0xff7744,
+    emissive: 0xff9955,
+    name: 'APAホテル\n名古屋駅前',
+    floors: '15階',
+    desc: '太閤通口(西口)南側のビジネスホテル。'
+  });
+
+  // ⑫ 西口周辺オフィスビル群
+  makeBuilding({ x: -80, z: -50, w: 35, d: 28, h: 48, color: 0x556677, name: '駅西オフィスA', floors: '10階', desc: '太閤通沿いオフィスビル。' });
+  makeBuilding({ x: -130, z: -80, w: 40, d: 32, h: 36, color: 0x445566, name: '駅西オフィスB', floors: '8階', desc: '' });
+  makeBuilding({ x: -180, z: -90, w: 45, d: 35, h: 55, color: 0x447766, name: '太閤通沿いビル', floors: '12階', desc: '太閤通沿い商業ビル。' });
+
+  // ⑬ 東口周辺
+  makeBuilding({ x: 170, z: -80, w: 40, d: 35, h: 42, color: 0x665544, name: '桜通沿いビルA', floors: '9階', desc: '桜通口東側のオフィスビル。' });
+  makeBuilding({ x: 200, z: 20, w: 45, d: 40, h: 38, color: 0x554433, name: '桜通沿いビルB', floors: '8階', desc: '' });
+
+  // ⑭ ユニモール上部（地下街上部建物）
+  makeBuilding({ x: 60, z: -100, w: 55, d: 30, h: 24, color: 0x334455, name: 'ユニモール上部', floors: '地上2〜3F', desc: '地下街ユニモール上部の商業建物。' });
+
+  // ⑮ ミッドランドスクエア (250mギリギリ外・シルエット)
+  makeBuilding({
+    x: 230, z: -10, w: 50, d: 50, h: 247,
+    color: 0x112233,
+    emissive: 0x224455,
+    name: 'ミッドランドスクエア\n(250m圏外・参考)',
+    floors: '47階 / 247m',
+    desc: '名古屋最高層ビル。約300m東に位置(参考表示)。'
+  });
+
+  // ⑯ バスターミナル・広場（低層プラットフォーム）
+  makeBuilding({ x: -60, z: 15, w: 60, d: 40, h: 6, color: 0x1a2a3a, name: '太閤通口広場', floors: '', desc: '西口バスターミナル・タクシー乗り場。' });
+
+  // ── 駅名テキストスプライト ────────────────
+  function makeLabel(text, x, y, z, color = '#88ccff') {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512; canvas.height = 80;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, 512, 80);
+    ctx.font = 'bold 28px sans-serif';
+    ctx.fillStyle = color;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    // Split on \n
+    const lines = text.split('\n');
+    lines.forEach((l, i) => ctx.fillText(l, 256, 20 + i * 34));
+    const tex = new THREE.CanvasTexture(canvas);
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+    const sprite = new THREE.Sprite(mat);
+    sprite.scale.set(80, 13, 1);
+    sprite.position.set(x, y, z);
+    scene.add(sprite);
+  }
+
+  makeLabel('JRセントラルタワーズ\nオフィス(北) 245m', 15, 258, -15, '#88aaff');
+  makeLabel('JRセントラルタワーズ\nホテル(南) 226m', 15, 240, 50, '#aabbff');
+  makeLabel('ルーセントタワー 180m', -200, 194, -10, '#44ddaa');
+  makeLabel('グローバルゲート 155m', -210, 168, 100, '#44cc88');
+  makeLabel('名鉄百貨店', 105, 122, -40, '#ffaa66');
+  makeLabel('名古屋駅', 15, 38, 15, '#ffffff');
+
+  // ── Compass rose ──────────────────────────
+  {
+    const pts = [];
+    const r = 30;
+    pts.push(new THREE.Vector3(0, 1, -r));
+    pts.push(new THREE.Vector3(0, 1, 0));
+    pts.push(new THREE.Vector3(r, 1, 0));
+    const geo = new THREE.BufferGeometry().setFromPoints(pts);
+    const mat = new THREE.LineBasicMaterial({ color: 0x4488ff, transparent: true, opacity: 0.6 });
+    const compass = new THREE.Line(geo, mat);
+    compass.position.set(-200, 0, -200);
+    scene.add(compass);
+    makeLabel('N', -200, 12, -230, '#4488ff');
+  }
+
+  // ── Raycaster for hover/click ─────────────
+  const raycaster = new THREE.Raycaster();
+  const mouse = new THREE.Vector2();
+  const tooltip = document.getElementById('tooltip');
+  const ttName = document.getElementById('tt-name');
+  const ttHeight = document.getElementById('tt-height');
+  const ttDesc = document.getElementById('tt-desc');
+  let hoveredMesh = null;
+  const origColors = new Map();
+
+  buildingMeshes.forEach(m => origColors.set(m, m.material.color.clone()));
+
+  renderer.domElement.addEventListener('mousemove', e => {
+    mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+    const hits = raycaster.intersectObjects(buildingMeshes);
+    if (hits.length > 0) {
+      const m = hits[0].object;
+      if (hoveredMesh !== m) {
+        if (hoveredMesh) hoveredMesh.material.color.copy(origColors.get(hoveredMesh));
+        hoveredMesh = m;
+        m.material.color.multiplyScalar(1.5);
+      }
+      tooltip.style.display = 'block';
+      tooltip.style.left = (e.clientX + 14) + 'px';
+      tooltip.style.top = (e.clientY - 20) + 'px';
+      ttName.textContent = m.userData.name.replace('\n', ' ');
+      ttHeight.textContent = m.userData.floors || '';
+      ttDesc.textContent = m.userData.desc || '';
+    } else {
+      if (hoveredMesh) { hoveredMesh.material.color.copy(origColors.get(hoveredMesh)); hoveredMesh = null; }
+      tooltip.style.display = 'none';
+    }
+  });
+
+  // ── Stars / background particles ─────────
+  {
+    const starsGeo = new THREE.BufferGeometry();
+    const positions = new Float32Array(2000 * 3);
+    for (let i = 0; i < 2000; i++) {
+      positions[i*3] = (Math.random()-0.5)*3000;
+      positions[i*3+1] = Math.random()*1200 + 200;
+      positions[i*3+2] = (Math.random()-0.5)*3000;
+    }
+    starsGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const starsMat = new THREE.PointsMaterial({ color: 0xffffff, size: 1.2, transparent: true, opacity: 0.4 });
+    scene.add(new THREE.Points(starsGeo, starsMat));
+  }
+
+  // ── Animation loop ────────────────────────
+  let t = 0;
+  function animate() {
+    requestAnimationFrame(animate);
+    t += 0.003;
+    // Subtle tower pulse
+    buildingMeshes.filter(m => m.userData.h > 200).forEach(m => {
+      m.material.emissiveIntensity = 0.1 + Math.sin(t + m.position.x) * 0.05;
+    });
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  // ── Resize ───────────────────────────────
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+}
+</script>
+</body>
+</html>
